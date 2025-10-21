@@ -87,7 +87,7 @@ HELP_MESSAGE_TEXT = """
 
 
 # =================================================================
-# بخش دیتابیس (با تابع حذف)
+# بخش دیتابیس (بدون تغییر)
 # =================================================================
 
 def get_db_conn():
@@ -254,9 +254,7 @@ def get_all_users_for_review() -> list:
         logger.error(f"Database error in get_all_users_for_review: {e}")
         return []
 
-# <--- تابع جدید برای حذف یک پیام از دیتابیس --->
 def delete_message_from_db(user_id: int, message_id: int) -> bool:
-    """یک پیام خاص را بر اساس آیدی کاربر و آیدی پیام حذف می‌کند"""
     try:
         conn = get_db_conn()
         with conn.cursor() as cursor:
@@ -331,7 +329,6 @@ async def trigger_leitner_review(bot, user_id: int, chat_id: int) -> int:
         message_id = msg['message_id']
         from_chat_id = msg['chat_id'] 
         
-        # <--- دکمه "حذف" به کیبورد اضافه شد --->
         keyboard = [[
             InlineKeyboardButton("✅ یادم بود", callback_data=f"leitner_up_{message_id}"),
             InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}"),
@@ -364,24 +361,33 @@ async def trigger_daily_reviews_for_all_users(context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             logger.error(f"Failed to trigger review for user {user['user_id']}: {e}")
 
-# <--- بازنویسی کامل `handle_leitner_callback` برای مدیریت حذف --->
+# <--- تابع `handle_leitner_callback` با منطق پارس کردن اصلاح شده --->
 async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
 
     try:
-        # دیتا را به فرمت "leitner_ACTION_MESSAGEID" می‌خوانیم
-        parts = query.data.split("_", 2)
-        action = parts[1]
-        message_id = int(parts[2])
+        # دیتا را از "leitner_" جدا می‌کنیم
+        # query.data examples: "leitner_up_889", "leitner_del_confirm_889"
+        data_part = query.data.replace("leitner_", "", 1)
+        
+        # با rsplit از سمت راست، اکشن و آیدی را جدا می‌کنیم
+        # "del_confirm_889" -> ['del_confirm', '889']
+        # "up_889" -> ['up', '889']
+        parts = data_part.rsplit("_", 1)
+        
+        action = parts[0]
+        message_id = int(parts[1])
+
     except (ValueError, IndexError, TypeError):
+        # اگر پارس کردن شکست خورد، لاگ می‌اندازیم
         logger.error(f"Invalid callback data received: {query.data}")
         await query.edit_message_text(text="❌ خطای داخلی.")
         return
 
     feedback_text = ""
-    new_keyboard = None # برای نگهداری کیبورد جدید (در صورت نیاز)
+    new_keyboard = None 
 
     if action == "up":
         new_box = move_leitner_box(user_id, message_id, 'up')
@@ -405,10 +411,8 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
         # مرحله ۲: تایید حذف
         if delete_message_from_db(user_id, message_id):
             feedback_text = "🗑️ یادداشت برای همیشه حذف شد."
-            # کیبورد None می‌ماند چون پیام حذف خواهد شد
         else:
             feedback_text = "❌ خطایی در هنگام حذف رخ داد."
-            # (در صورت خطا، کیبورد None می‌ماند و فقط متن ویرایش می‌شود)
 
     elif action == "del_cancel":
         # مرحله ۲: انصراف از حذف
@@ -425,13 +429,10 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
     else:
         feedback_text = "❌ دستور نامعتبر."
 
-    # اعمال تغییرات (ویرایش متن، کیبورد یا حذف پیام)
     try:
         if action == "del_confirm" and "حذف شد" in feedback_text:
-            # اگر تایید حذف موفق بود، کل پیام را پاک می‌کنیم
             await query.delete_message()
         else:
-            # در غیر این صورت، پیام را ویرایش می‌کنیم
             if query.message.text:
                 await query.edit_message_text(
                     text=feedback_text, 
@@ -452,7 +453,7 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 # =================================================================
-# منوی آمار
+# منوی آمار (بدون تغییر)
 # =================================================================
 
 async def stats_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -505,7 +506,6 @@ async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT
         message_id = msg['message_id']
         from_chat_id = msg['chat_id']
         
-        # <--- دکمه "حذف" به این کیبورد هم اضافه شد --->
         keyboard = [[
             InlineKeyboardButton("✅ یادم بود", callback_data=f"leitner_up_{message_id}"),
             InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}"),
@@ -535,7 +535,7 @@ async def handle_stats_close_callback(update: Update, context: ContextTypes.DEFA
         logger.warning(f"Could not delete stats message: {e}")
 
 # =================================================================
-# سایر دکمه‌ها و مکالمه تنظیمات
+# سایر دکمه‌ها و مکالمه تنظیمات (بدون تغییر)
 # =================================================================
 
 async def handle_review_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -599,7 +599,7 @@ async def settings_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return ConversationHandler.END
 
 # =================================================================
-# تابع اصلی
+# تابع اصلی (بدون تغییر)
 # =================================================================
 def main() -> None:
     if not BOT_TOKEN:
@@ -627,7 +627,6 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📚 نمایش همه$") & private_chat_filter, list_all_messages))
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^❓ راهنما$") & private_chat_filter, show_help))
     
-    # <--- `handle_leitner_callback` اکنون تمام اکشن‌های "leitner_*" را مدیریت می‌کند --->
     application.add_handler(CallbackQueryHandler(handle_leitner_callback, pattern="^leitner_"))
     application.add_handler(CallbackQueryHandler(handle_view_box_callback, pattern="^view_box_"))
     application.add_handler(CallbackQueryHandler(handle_stats_close_callback, pattern="^stats_close$"))
