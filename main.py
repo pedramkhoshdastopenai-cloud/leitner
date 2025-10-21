@@ -3,7 +3,6 @@ import psycopg
 import os 
 import asyncio
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-# <--- ایمپورت ParseMode برای استفاده از HTML --->
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -32,10 +31,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =================================================================
-# متن راهنما (بازنویسی شده با HTML برای جلوگیری از خطا)
+# متن راهنما (بدون تغییر)
 # =================================================================
-
-# <--- متن راهنما به HTML تغییر کرد --->
 HELP_MESSAGE_TEXT = """
 🧠 <b>این ربات چطور به حافظه شما کمک می‌کنه؟</b>
 
@@ -90,7 +87,7 @@ HELP_MESSAGE_TEXT = """
 
 
 # =================================================================
-# بخش دیتابیس (بدون تغییر)
+# بخش دیتابیس (با تابع حذف)
 # =================================================================
 
 def get_db_conn():
@@ -257,6 +254,21 @@ def get_all_users_for_review() -> list:
         logger.error(f"Database error in get_all_users_for_review: {e}")
         return []
 
+# <--- تابع جدید برای حذف یک پیام از دیتابیس --->
+def delete_message_from_db(user_id: int, message_id: int) -> bool:
+    """یک پیام خاص را بر اساس آیدی کاربر و آیدی پیام حذف می‌کند"""
+    try:
+        conn = get_db_conn()
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM messages WHERE user_id = %s AND message_id = %s", (user_id, message_id))
+            conn.commit()
+        conn.close()
+        logger.info(f"Message {message_id} deleted for user {user_id}.")
+        return True
+    except psycopg.Error as e:
+        logger.error(f"Database error in delete_message_from_db: {e}")
+        return False
+
 
 # =================================================================
 # دستورات و دکمه‌های اصلی
@@ -279,18 +291,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "هر چیزی برای من بفرستید تا به **جعبه ۱** لایتنر شما اضافه شود.\n\n"
         "اگر نمی‌دانید چطور کار می‌کند، دکمه **«❓ راهنما»** را بزنید."
     )
-    # <--- parse_mode به MarkdownV2 تغییر کرد تا با HTML تداخل نکند --->
     await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ارسال پیام راهنما"""
-    # <--- استفاده از ParseMode.HTML برای جلوگیری از خطای پارس --->
     await update.message.reply_text(
         HELP_MESSAGE_TEXT, 
         parse_mode=ParseMode.HTML, 
         disable_web_page_preview=True
     )
-
 
 async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -323,9 +331,11 @@ async def trigger_leitner_review(bot, user_id: int, chat_id: int) -> int:
         message_id = msg['message_id']
         from_chat_id = msg['chat_id'] 
         
+        # <--- دکمه "حذف" به کیبورد اضافه شد --->
         keyboard = [[
             InlineKeyboardButton("✅ یادم بود", callback_data=f"leitner_up_{message_id}"),
-            InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}")
+            InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}"),
+            InlineKeyboardButton("🗑️ حذف", callback_data=f"leitner_del_{message_id}")
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         try:
@@ -354,46 +364,98 @@ async def trigger_daily_reviews_for_all_users(context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             logger.error(f"Failed to trigger review for user {user['user_id']}: {e}")
 
-
+# <--- بازنویسی کامل `handle_leitner_callback` برای مدیریت حذف --->
 async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    user_id = query.from_user.id 
+    user_id = query.from_user.id
     await query.answer()
 
     try:
-        action, message_id_str = query.data.split("_", 2)[1:]
-        message_id = int(message_id_str)
-    except (ValueError, IndexError):
+        # دیتا را به فرمت "leitner_ACTION_MESSAGEID" می‌خوانیم
+        parts = query.data.split("_", 2)
+        action = parts[1]
+        message_id = int(parts[2])
+    except (ValueError, IndexError, TypeError):
         logger.error(f"Invalid callback data received: {query.data}")
-        await query.edit_message_text(text="❌ خطای داخلی در پردازش دکمه.")
+        await query.edit_message_text(text="❌ خطای داخلی.")
         return
-    
+
+    feedback_text = ""
+    new_keyboard = None # برای نگهداری کیبورد جدید (در صورت نیاز)
+
     if action == "up":
         new_box = move_leitner_box(user_id, message_id, 'up')
         feedback_text = f"👍 عالی! این یادداشت به جعبه <b>{new_box}</b> منتقل شد."
+    
     elif action == "reset":
         new_box = move_leitner_box(user_id, message_id, 'reset')
         feedback_text = f"🔄 این یادداشت برای مرور بیشتر به جعبه <b>{new_box}</b> برگشت."
+    
+    elif action == "del":
+        # مرحله ۱: درخواست تایید حذف
+        feedback_text = "⚠️ <b>آیا از حذف این یادداشت مطمئن هستید؟</b>\nاین عمل قابل بازگشت نیست."
+        new_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🚮 بله، حذف کن", callback_data=f"leitner_del_confirm_{message_id}"),
+                InlineKeyboardButton("↪️ انصراف", callback_data=f"leitner_del_cancel_{message_id}")
+            ]
+        ])
+
+    elif action == "del_confirm":
+        # مرحله ۲: تایید حذف
+        if delete_message_from_db(user_id, message_id):
+            feedback_text = "🗑️ یادداشت برای همیشه حذف شد."
+            # کیبورد None می‌ماند چون پیام حذف خواهد شد
+        else:
+            feedback_text = "❌ خطایی در هنگام حذف رخ داد."
+            # (در صورت خطا، کیبورد None می‌ماند و فقط متن ویرایش می‌شود)
+
+    elif action == "del_cancel":
+        # مرحله ۲: انصراف از حذف
+        feedback_text = "عملیات حذف لغو شد."
+        # برگرداندن کیبورد به حالت اولیه
+        new_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ یادم بود", callback_data=f"leitner_up_{message_id}"),
+                InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}"),
+                InlineKeyboardButton("🗑️ حذف", callback_data=f"leitner_del_{message_id}")
+            ]
+        ])
+
     else:
         feedback_text = "❌ دستور نامعتبر."
-    
+
+    # اعمال تغییرات (ویرایش متن، کیبورد یا حذف پیام)
     try:
-        if query.message.text:
-            await query.edit_message_text(text=feedback_text, parse_mode=ParseMode.HTML, reply_markup=None)
+        if action == "del_confirm" and "حذف شد" in feedback_text:
+            # اگر تایید حذف موفق بود، کل پیام را پاک می‌کنیم
+            await query.delete_message()
         else:
-            await query.edit_message_caption(caption=feedback_text, parse_mode=ParseMode.HTML, reply_markup=None)
+            # در غیر این صورت، پیام را ویرایش می‌کنیم
+            if query.message.text:
+                await query.edit_message_text(
+                    text=feedback_text, 
+                    parse_mode=ParseMode.HTML, 
+                    reply_markup=new_keyboard
+                )
+            else:
+                await query.edit_message_caption(
+                    caption=feedback_text, 
+                    parse_mode=ParseMode.HTML, 
+                    reply_markup=new_keyboard
+                )
     except BadRequest as e:
         if "message is not modified" not in str(e):
-            logger.warning(f"Could not edit message after callback (maybe already edited): {e}")
+            logger.warning(f"Could not edit message after callback: {e}")
     except Exception as e:
-        logger.error(f"Failed to edit message after callback: {e}")
+        logger.error(f"Failed to edit/delete message after callback: {e}")
+
 
 # =================================================================
-# منوی آمار (با رفع خطا)
+# منوی آمار
 # =================================================================
 
 async def stats_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """منوی اصلی آمار را نمایش می‌دهد (هوشمند برای پیام یا callback)"""
     user_id = update.effective_user.id
     stats = get_leitner_stats(user_id) 
     
@@ -408,17 +470,12 @@ async def stats_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     stats_text = f"📊 <b>آمار جعبه لایتنر شما</b>\n\nبرای مشاهده محتوای هر جعبه، روی دکمه آن کلیک کنید."
 
-    # <--- اصلاح منطق برای جلوگیری از خطای AttributeError --->
     if update.message:
-        # اگر با دکمه "آمار لایتنر" فراخوانی شده
         await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     elif update.callback_query:
-        # اگر بعد از اتمام "view_box" فراخوانی شده
         try:
-            # سعی کن پیام قبلی را ویرایش کنی
             await update.callback_query.message.edit_text(stats_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         except BadRequest:
-            # اگر پیام قبلی حذف شده بود، پیام جدید بفرست
             await context.bot.send_message(chat_id=update.effective_chat.id, text=stats_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
 
@@ -439,7 +496,7 @@ async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT
     
     if not messages:
         await query.delete_message()
-        await stats_menu_handler(update, context) # <--- 'update' را پاس می‌دهیم
+        await stats_menu_handler(update, context) 
         return
 
     await query.delete_message()
@@ -447,9 +504,12 @@ async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT
     for msg in messages:
         message_id = msg['message_id']
         from_chat_id = msg['chat_id']
+        
+        # <--- دکمه "حذف" به این کیبورد هم اضافه شد --->
         keyboard = [[
             InlineKeyboardButton("✅ یادم بود", callback_data=f"leitner_up_{message_id}"),
-            InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}")
+            InlineKeyboardButton("🤔 مرور مجدد", callback_data=f"leitner_reset_{message_id}"),
+            InlineKeyboardButton("🗑️ حذف", callback_data=f"leitner_del_{message_id}")
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         try:
@@ -463,7 +523,6 @@ async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT
         except Exception as e:
             logger.warning(f"Could not copy message {message_id} from box view for user {user_id}: {e}")
 
-    # <--- 'update' را پاس می‌دهیم تا تابع stats_menu_handler بتواند کار کند
     await stats_menu_handler(update, context)
 
 
@@ -566,9 +625,9 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^🎲 مرور روزانه$") & private_chat_filter, handle_review_button))
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📊 آمار لایتنر$") & private_chat_filter, stats_menu_handler))
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📚 نمایش همه$") & private_chat_filter, list_all_messages))
-    
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^❓ راهنما$") & private_chat_filter, show_help))
     
+    # <--- `handle_leitner_callback` اکنون تمام اکشن‌های "leitner_*" را مدیریت می‌کند --->
     application.add_handler(CallbackQueryHandler(handle_leitner_callback, pattern="^leitner_"))
     application.add_handler(CallbackQueryHandler(handle_view_box_callback, pattern="^view_box_"))
     application.add_handler(CallbackQueryHandler(handle_stats_close_callback, pattern="^stats_close$"))
@@ -583,7 +642,7 @@ def main() -> None:
     job_queue = application.job_queue
     job_queue.run_repeating(trigger_daily_reviews_for_all_users, interval=86400, first=10) 
 
-    logger.info("Starting Leitner System Bot (Multi-User Edition with Help Feature)...")
+    logger.info("Starting Leitner System Bot (Multi-User Edition with Delete Feature)...")
     application.run_polling()
 
 if __name__ == "__main__":
