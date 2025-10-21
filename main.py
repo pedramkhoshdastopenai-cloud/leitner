@@ -1,8 +1,10 @@
 import logging
-import psycopg # درایور PostgreSQL
-import os # برای خواندن متغیرهای محیطی
+import psycopg 
+import os 
 import asyncio
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+# <--- ایمپورت ParseMode برای استفاده از HTML --->
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,7 +15,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 from telegram.error import BadRequest
-from psycopg.rows import dict_row # برای دریافت نتایج به صورت دیکشنری
+from psycopg.rows import dict_row 
 
 # --- تنظیمات ضروری ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -30,60 +32,60 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =================================================================
-# متن راهنما (جدید)
+# متن راهنما (بازنویسی شده با HTML برای جلوگیری از خطا)
 # =================================================================
 
-# <--- متن راهنمای جدید از دیدگاه طراح محصول --->
+# <--- متن راهنما به HTML تغییر کرد --->
 HELP_MESSAGE_TEXT = """
-🧠 **این ربات چطور به حافظه شما کمک می‌کنه؟**
+🧠 <b>این ربات چطور به حافظه شما کمک می‌کنه؟</b>
 
 سلام! من ربات دستیار حافظه شما هستم.
 حتماً براتون پیش اومده که نکته‌ای رو یاد بگیرید، یادداشت کنید، ولی چند هفته بعد کاملاً فراموشش کنید.
 
-**مشکل کجاست؟**
+<b>مشکل کجاست؟</b>
 مغز ما برای فراموش کردن طراحی شده! مگر اینکه اطلاعات رو در زمان‌های مشخصی "مرور" کنیم.
 
-**راه حل: سیستم لایتنر (Leitner System)**
+<b>راه حل: سیستم لایتنر (Leitner System)</b>
 این ربات بر اساس یک روش علمی و مشهور به نام «سیستم جعبه لایتنر» یا «تکرار فاصله‌دار» (Spaced Repetition) کار می‌کنه.
 
 ---
 
-📥 **۱. چطور ازش استفاده کنم؟**
+📥 <b>۱. چطور ازش استفاده کنم؟</b>
 
 خیلی ساده‌ست!
-**هر چیزی** (متن، عکس، فایل، ویس، لینک) که می‌خواید به خاطر بسپارید رو مستقیماً برای من بفرستید.
+<b>هر چیزی</b> (متن، عکس، فایل، ویس، لینک) که می‌خواید به خاطر بسپارید رو مستقیماً برای من بفرستید.
 
-من اون رو در **"جعبه ۱"** شما قرار می‌دم.
+من اون رو در <b>"جعبه ۱"</b> شما قرار می‌دم.
 
 ---
 
-🔁 **۲. "مرور روزانه" چیه؟**
+🔁 <b>۲. "مرور روزانه" چیه؟</b>
 
 من هر روز (یا هر وقت دکمه «🎲 مرور روزانه» رو بزنید) چندتا از یادداشت‌هاتون رو براتون می‌فرستم و می‌پرسم:
 
-* **"✅ یادم بود"**: عالی! اون یادداشت به جعبه بعدی می‌ره (مثلاً از ۱ به ۲).
-* **"🤔 مرور مجدد"**: اشکالی نداره! اون یادداشت به "جعبه ۱" برمی‌گرده تا بیشتر مرورش کنیم.
+• <b>"✅ یادم بود"</b>: عالی! اون یادداشت به جعبه بعدی می‌ره (مثلاً از ۱ به ۲).
+• <b>"🤔 مرور مجدد"</b>: اشکالی نداره! اون یادداشت به "جعبه ۱" برمی‌گرده تا بیشتر مرورش کنیم.
 
 ---
 
-📈 **۳. جادوی کار کجاست؟**
+📈 <b>۳. جادوی کار کجاست؟</b>
 
-* یادداشت‌های **جعبه ۱** (چیزایی که تازه یاد گرفتید) **زود به زود** مرور می‌شن.
-* یادداشت‌های **جعبه ۵** (چیزایی که کاملاً بلدید) **دیر به دیر** (مثلاً هر چند ماه) مرور می‌شن.
+• یادداشت‌های <b>جعبه ۱</b> (چیزایی که تازه یاد گرفتید) <b>زود به زود</b> مرور می‌شن.
+• یادداشت‌های <b>جعبه ۵</b> (چیزایی که کاملاً بلدید) <b>دیر به دیر</b> (مثلاً هر چند ماه) مرور می‌شن.
 
 اینطوری، شما وقتتون رو روی چیزایی که بلدید تلف نمی‌کنید و روی چیزایی که یادتون می‌ره تمرکز می‌کنید. این کار، اطلاعات رو به حافظه بلندمدت شما منتقل می‌کنه.
 
 ---
 
-❓ **معنی دکمه‌ها:**
+❓ <b>معنی دکمه‌ها:</b>
 
-* **🎲 مرور روزانه**: شروع یک جلسه مرور دستی.
-* **📊 آمار لایتنر**: ببینید در هر جعبه چندتا یادداشت دارید.
-* **📚 نمایش همه**: تمام یادداشت‌هایی که ذخیره کردید رو براتون فوروارد می‌کنه.
-* **⚙️ تنظیمات**: تعداد مرورهای روزانه رو می‌تونید کم یا زیاد کنید.
-* **❓ راهنما**: همین پیامی که دارید می‌خونید!
+• <b>🎲 مرور روزانه</b>: شروع یک جلسه مرور دستی.
+• <b>📊 آمار لایتنر</b>: ببینید در هر جعبه چندتا یادداشت دارید.
+• <b>📚 نمایش همه</b>: تمام یادداشت‌هایی که ذخیره کردید رو براتون فوروارد می‌کنه.
+• <b>⚙️ تنظیمات</b>: تعداد مرورهای روزانه رو می‌تونید کم یا زیاد کنید.
+• <b>❓ راهنما</b>: همین پیامی که دارید می‌خونید!
 
-**برای شروع، اولین نکته‌ای که می‌خواید یادتون بمونه رو برای من بفرستید.**
+<b>برای شروع، اولین نکته‌ای که می‌خواید یادتون بمونه رو برای من بفرستید.</b>
 """
 
 
@@ -263,7 +265,6 @@ def get_all_users_for_review() -> list:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     
-    # <--- دکمه "راهنما" به کیبورد اضافه شد --->
     keyboard = [
         ["🎲 مرور روزانه", "📊 آمار لایتنر"],
         ["📚 نمایش همه", "⚙️ تنظیمات"],
@@ -278,12 +279,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "هر چیزی برای من بفرستید تا به **جعبه ۱** لایتنر شما اضافه شود.\n\n"
         "اگر نمی‌دانید چطور کار می‌کند، دکمه **«❓ راهنما»** را بزنید."
     )
-    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
+    # <--- parse_mode به MarkdownV2 تغییر کرد تا با HTML تداخل نکند --->
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
 
-# <--- تابع جدید برای نمایش راهنما --->
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ارسال پیام راهنما"""
-    await update.message.reply_text(HELP_MESSAGE_TEXT, parse_mode='Markdown', disable_web_page_preview=True)
+    # <--- استفاده از ParseMode.HTML برای جلوگیری از خطای پارس --->
+    await update.message.reply_text(
+        HELP_MESSAGE_TEXT, 
+        parse_mode=ParseMode.HTML, 
+        disable_web_page_preview=True
+    )
 
 
 async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -364,18 +370,18 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
     
     if action == "up":
         new_box = move_leitner_box(user_id, message_id, 'up')
-        feedback_text = f"👍 عالی! این یادداشت به جعبه **{new_box}** منتقل شد."
+        feedback_text = f"👍 عالی! این یادداشت به جعبه <b>{new_box}</b> منتقل شد."
     elif action == "reset":
         new_box = move_leitner_box(user_id, message_id, 'reset')
-        feedback_text = f"🔄 این یادداشت برای مرور بیشتر به جعبه **{new_box}** برگشت."
+        feedback_text = f"🔄 این یادداشت برای مرور بیشتر به جعبه <b>{new_box}</b> برگشت."
     else:
         feedback_text = "❌ دستور نامعتبر."
     
     try:
         if query.message.text:
-            await query.edit_message_text(text=feedback_text, parse_mode='Markdown', reply_markup=None)
+            await query.edit_message_text(text=feedback_text, parse_mode=ParseMode.HTML, reply_markup=None)
         else:
-            await query.edit_message_caption(caption=feedback_text, parse_mode='Markdown', reply_markup=None)
+            await query.edit_message_caption(caption=feedback_text, parse_mode=ParseMode.HTML, reply_markup=None)
     except BadRequest as e:
         if "message is not modified" not in str(e):
             logger.warning(f"Could not edit message after callback (maybe already edited): {e}")
@@ -383,10 +389,11 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"Failed to edit message after callback: {e}")
 
 # =================================================================
-# منوی آمار
+# منوی آمار (با رفع خطا)
 # =================================================================
 
 async def stats_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """منوی اصلی آمار را نمایش می‌دهد (هوشمند برای پیام یا callback)"""
     user_id = update.effective_user.id
     stats = get_leitner_stats(user_id) 
     
@@ -399,8 +406,21 @@ async def stats_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard.append([InlineKeyboardButton("❌ بستن", callback_data="stats_close")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    stats_text = f"📊 **آمار جعبه لایتنر شما**\n\nبرای مشاهده محتوای هر جعبه، روی دکمه آن کلیک کنید."
-    await update.message.reply_text(stats_text, parse_mode='Markdown', reply_markup=reply_markup)
+    stats_text = f"📊 <b>آمار جعبه لایتنر شما</b>\n\nبرای مشاهده محتوای هر جعبه، روی دکمه آن کلیک کنید."
+
+    # <--- اصلاح منطق برای جلوگیری از خطای AttributeError --->
+    if update.message:
+        # اگر با دکمه "آمار لایتنر" فراخوانی شده
+        await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+    elif update.callback_query:
+        # اگر بعد از اتمام "view_box" فراخوانی شده
+        try:
+            # سعی کن پیام قبلی را ویرایش کنی
+            await update.callback_query.message.edit_text(stats_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except BadRequest:
+            # اگر پیام قبلی حذف شده بود، پیام جدید بفرست
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=stats_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
 
 async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -415,11 +435,11 @@ async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT
 
     messages = get_messages_in_box(user_id, box_number)
     
-    await query.edit_message_text(f"شما **{len(messages)}** یادداشت در جعبه {box_number} دارید. در حال ارسال...")
+    await query.edit_message_text(f"شما <b>{len(messages)}</b> یادداشت در جعبه {box_number} دارید. در حال ارسال...", parse_mode=ParseMode.HTML)
     
     if not messages:
         await query.delete_message()
-        await stats_menu_handler(update, context) 
+        await stats_menu_handler(update, context) # <--- 'update' را پاس می‌دهیم
         return
 
     await query.delete_message()
@@ -443,6 +463,7 @@ async def handle_view_box_callback(update: Update, context: ContextTypes.DEFAULT
         except Exception as e:
             logger.warning(f"Could not copy message {message_id} from box view for user {user_id}: {e}")
 
+    # <--- 'update' را پاس می‌دهیم تا تابع stats_menu_handler بتواند کار کند
     await stats_menu_handler(update, context)
 
 
@@ -463,7 +484,7 @@ async def handle_review_button(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id
     daily_reviews = int(get_setting(user_id, 'daily_reviews', '2'))
     
-    await update.message.reply_text(f"⏳ در حال یافتن **{daily_reviews}** یادداشت برای مرور...")
+    await update.message.reply_text(f"⏳ در حال یافتن <b>{daily_reviews}</b> یادداشت برای مرور...", parse_mode=ParseMode.HTML)
     sent_count = await trigger_leitner_review(context.bot, user_id, chat_id)
     if sent_count == 0: await update.message.reply_text("هنوز هیچ یادداشتی برای مرور ذخیره نکرده‌اید!")
 
@@ -479,7 +500,7 @@ async def list_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("هنوز هیچ یادداشتی ذخیره نکرده‌اید!")
         return
 
-    await update.message.reply_text(f"در حال ارسال **{len(all_messages)}** یادداشت...")
+    await update.message.reply_text(f"در حال ارسال <b>{len(all_messages)}</b> یادداشت...", parse_mode=ParseMode.HTML)
     for msg in all_messages:
         try:
             await context.bot.forward_message(chat_id=chat_id, from_chat_id=msg['chat_id'], message_id=msg['message_id'])
@@ -493,9 +514,9 @@ async def settings_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     current_count = get_setting(user_id, 'daily_reviews', '2')
     
     await update.message.reply_text(
-        f"⚙️ **تنظیمات**\n\nتعداد مرور روزانه در حال حاضر: **{current_count}**\n\n"
+        f"⚙️ <b>تنظیمات</b>\n\nتعداد مرور روزانه در حال حاضر: <b>{current_count}</b>\n\n"
         "لطفاً تعداد جدید را به صورت یک عدد (مثلاً 5) ارسال کنید.\nبرای لغو، /cancel را بزنید.",
-        parse_mode='Markdown'
+        parse_mode=ParseMode.HTML
     )
     return AWAITING_REVIEW_COUNT
 
@@ -505,7 +526,7 @@ async def settings_receive_count(update: Update, context: ContextTypes.DEFAULT_T
         new_count = int(update.message.text)
         if 1 <= new_count <= 20:
             set_setting(user_id, 'daily_reviews', str(new_count))
-            await update.message.reply_text(f"✅ تعداد مرور روزانه به **{new_count}** تغییر کرد.", parse_mode='Markdown')
+            await update.message.reply_text(f"✅ تعداد مرور روزانه به <b>{new_count}</b> تغییر کرد.", parse_mode=ParseMode.HTML)
             return ConversationHandler.END
         else:
             await update.message.reply_text("❌ لطفاً یک عدد بین ۱ تا ۲۰ وارد کنید.")
@@ -546,14 +567,12 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📊 آمار لایتنر$") & private_chat_filter, stats_menu_handler))
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📚 نمایش همه$") & private_chat_filter, list_all_messages))
     
-    # <--- هندلر جدید برای دکمه راهنما --->
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^❓ راهنما$") & private_chat_filter, show_help))
     
     application.add_handler(CallbackQueryHandler(handle_leitner_callback, pattern="^leitner_"))
     application.add_handler(CallbackQueryHandler(handle_view_box_callback, pattern="^view_box_"))
     application.add_handler(CallbackQueryHandler(handle_stats_close_callback, pattern="^stats_close$"))
 
-    # <--- دکمه راهنما به لیست دکمه‌ها اضافه شد تا به عنوان یادداشت ذخیره نشود --->
     button_texts = ["^🎲 مرور روزانه$", "^📊 آمار لایتنر$", "^📚 نمایش همه$", "^⚙️ تنظیمات$", "^❓ راهنما$"]
     button_regex = "|".join(button_texts)
     application.add_handler(MessageHandler(
