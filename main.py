@@ -269,9 +269,10 @@ def delete_message_from_db(user_id: int, message_id: int) -> bool:
 
 
 # =================================================================
-# دستورات و دکمه‌های اصلی
+# دستورات و دکمه‌های اصلی (تابع start اصلاح شد)
 # =================================================================
 
+# <--- تابع start با parse_mode=HTML اصلاح شد --->
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     
@@ -283,13 +284,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     
     stats = get_leitner_stats(user_id) 
+    
+    # <--- متن خوشامدگویی به فرمت HTML تغییر کرد --->
     welcome_message = (
         f"سلام! به سیستم یادآوری لایتنر شخصی خود خوش آمدید.\n\n"
-        f"شما **{stats['total']}** یادداشت در آرشیو خود دارید.\n\n"
-        "هر چیزی برای من بفرستید تا به **جعبه ۱** لایتنر شما اضافه شود.\n\n"
-        "اگر نمی‌دانید چطور کار می‌کند، دکمه **«❓ راهنما»** را بزنید."
+        f"شما <b>{stats['total']}</b> یادداشت در آرشیو خود دارید.\n\n"
+        "هر چیزی برای من بفرستید تا به <b>جعبه ۱</b> لایتنر شما اضافه شود.\n\n"
+        "اگر نمی‌دانید چطور کار می‌کند، دکمه <b>«❓ راهنما»</b> را بزنید."
     )
-    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
+    
+    # <--- parse_mode به HTML تغییر کرد تا خطا برطرف شود --->
+    await update.message.reply_text(
+        welcome_message, 
+        reply_markup=reply_markup, 
+        parse_mode=ParseMode.HTML
+    )
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -308,7 +317,7 @@ async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ به جعبه ۱ شما اضافه شد! (مجموع: {stats['total']})", reply_to_message_id=message_id)
 
 # =================================================================
-# منطق اصلی مرور و بازخورد لایتنر
+# منطق اصلی مرور و بازخورد لایتنر (بدون تغییر)
 # =================================================================
 
 async def trigger_leitner_review(bot, user_id: int, chat_id: int) -> int:
@@ -361,27 +370,19 @@ async def trigger_daily_reviews_for_all_users(context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             logger.error(f"Failed to trigger review for user {user['user_id']}: {e}")
 
-# <--- تابع `handle_leitner_callback` با منطق پارس کردن اصلاح شده --->
+
 async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
 
     try:
-        # دیتا را از "leitner_" جدا می‌کنیم
-        # query.data examples: "leitner_up_889", "leitner_del_confirm_889"
         data_part = query.data.replace("leitner_", "", 1)
-        
-        # با rsplit از سمت راست، اکشن و آیدی را جدا می‌کنیم
-        # "del_confirm_889" -> ['del_confirm', '889']
-        # "up_889" -> ['up', '889']
         parts = data_part.rsplit("_", 1)
-        
         action = parts[0]
         message_id = int(parts[1])
 
     except (ValueError, IndexError, TypeError):
-        # اگر پارس کردن شکست خورد، لاگ می‌اندازیم
         logger.error(f"Invalid callback data received: {query.data}")
         await query.edit_message_text(text="❌ خطای داخلی.")
         return
@@ -398,7 +399,6 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
         feedback_text = f"🔄 این یادداشت برای مرور بیشتر به جعبه <b>{new_box}</b> برگشت."
     
     elif action == "del":
-        # مرحله ۱: درخواست تایید حذف
         feedback_text = "⚠️ <b>آیا از حذف این یادداشت مطمئن هستید؟</b>\nاین عمل قابل بازگشت نیست."
         new_keyboard = InlineKeyboardMarkup([
             [
@@ -408,16 +408,13 @@ async def handle_leitner_callback(update: Update, context: ContextTypes.DEFAULT_
         ])
 
     elif action == "del_confirm":
-        # مرحله ۲: تایید حذف
         if delete_message_from_db(user_id, message_id):
             feedback_text = "🗑️ یادداشت برای همیشه حذف شد."
         else:
             feedback_text = "❌ خطایی در هنگام حذف رخ داد."
 
     elif action == "del_cancel":
-        # مرحله ۲: انصراف از حذف
         feedback_text = "عملیات حذف لغو شد."
-        # برگرداندن کیبورد به حالت اولیه
         new_keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ یادم بود", callback_data=f"leitner_up_{message_id}"),
